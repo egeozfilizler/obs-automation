@@ -32,8 +32,8 @@ pip install -r requirements.txt
 Create a `credentials.py` file and define:
 ```python
 users = {
-    "user1": {"username": "your_username", "password": "your_password"},
-    "user2": {"username": "another_username", "password": "another_password"}
+    "user1": {"id": "your_id", "password": "your_password"},
+    "user2": {"id": "another_id", "password": "another_password"}
 }
 
 CAPSOLVER_API_KEY = "your_capsolver_api_key"
