@@ -22,6 +22,10 @@ capsolver.api_key = CAPSOLVER_API_KEY
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTCHA_IMAGE_PATH = os.path.join(CURRENT_DIR, "temp/captcha.png")
 
+# Create folders
+os.makedirs(os.path.join(CURRENT_DIR, "temp"), exist_ok=True)
+os.makedirs(os.path.join(CURRENT_DIR, "data"), exist_ok=True)
+
 # Initialize the Selenium WebDriver
 def start_browser():
     options = webdriver.ChromeOptions()
