@@ -1,0 +1,23 @@
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore virtual environment directories
+env/
+venv/
+
+# Ignore sensitive files
+LICENSE
+credentials.py
+
+# Ignore temporary files
+temp/
+*.tmp
+
+# Ignore data files
+data/*.json
+
+# Ignore system files
+.DS_Store
+Thumbs.db
