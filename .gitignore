@@ -8,7 +8,6 @@ env/
 venv/
 
 # Ignore sensitive files
-LICENSE
 credentials.py
 
 # Ignore temporary files
