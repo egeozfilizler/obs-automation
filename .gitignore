@@ -15,6 +15,7 @@ temp/
 *.tmp
 
 # Ignore data files
+data/
 data/*.json
 
 # Ignore system files
