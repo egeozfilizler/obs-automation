@@ -9,7 +9,6 @@ imports secrets from it.
 import os
 import sys
 import time
-import random
 import json
 import shutil
 import re
@@ -21,6 +20,9 @@ from email.mime.multipart import MIMEMultipart
 import psutil
 import capsolver
 from deepdiff import DeepDiff
+
+import logging
+from apscheduler.schedulers.blocking import BlockingScheduler
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -44,12 +46,15 @@ from credentials import (
 	CAPSOLVER_API_KEY,
 	SENDER_MAIL,
 	SENDER_PASSWORD,
-	CHROME_PROFILE_PATH,
 )
 
 # Path helpers
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTCHA_IMAGE_PATH = os.path.join(CURRENT_DIR, "temp", "captcha.png")
+
+# Configure logging
+logging.basicConfig()
+logging.getLogger('apscheduler').setLevel(logging.INFO)
 
 # Ensure folders exist
 os.makedirs(os.path.join(CURRENT_DIR, "temp"), exist_ok=True)
@@ -116,9 +121,9 @@ def login_to_obs(driver, wait, user_credentials, captcha_path):
 				pass
 
 			try:
-				for ch in text:
-					time.sleep(random.uniform(0.03, 0.12))
-					element.send_keys(ch)
+				# send the whole text at once instead of character-by-character to avoid
+				# artificially slow "human-like" typing
+				element.send_keys(text)
 
 				end_time = time.time() + timeout
 				while time.time() < end_time:
@@ -410,20 +415,20 @@ def logout_from_obs(driver):
 		print(f'Çıkış sırasında hata: {e}')
 		return False
 
-def connect_driver(CHROME_PROFILE_PATH=None, headless=False):
+def connect_driver(headless=False):
 	try:
-		chrome_options = Options()
-		if CHROME_PROFILE_PATH:
-			chrome_options.add_argument(f'--user-data-dir={CHROME_PROFILE_PATH}')
-		chrome_options.add_argument('--no-first-run')
-		chrome_options.add_argument('--no-default-browser-check')
-		chrome_options.add_argument('--disable-password-manager-reauthentication')
-		chrome_options.add_argument('--password-store=basic')
+		# Use `options` variable name and avoid relying on a profile path
+		options = Options()
+		options.add_argument('--no-first-run')
+		options.add_argument('--no-default-browser-check')
+		options.add_argument('--disable-password-manager-reauthentication')
+		options.add_argument('--password-store=basic')
 		if headless:
-			chrome_options.add_argument('--headless=new')
+			options.add_argument('--headless')
 
 		service = Service(ChromeDriverManager().install())
-		driver = webdriver.Chrome(service=service, options=chrome_options)
+		# Explicitly create the driver with Service and options as requested
+		driver = webdriver.Chrome(service=service, options=options)
 		print('Chrome WebDriver başlatıldı (webdriver-manager kullanıldı).')
 		return driver
 	except Exception as e:
@@ -485,40 +490,57 @@ def process_user(driver, wait, user, user_data):
 	except Exception as e:
 		print(f"{user}: İşlem sırasında hata - {str(e)}")
 
+def run_check():
+    """
+    Bu, sizin orijinal 'main' fonksiyonunuzun içindeki tüm mantıktır.
+    İsmini 'main'den 'run_check'e değiştirdik.
+    """
+    driver = None
+    try:
+        driver = connect_driver(headless=False)
+        if driver is None:
+            print('Driver alınamadı, program sonlandırılıyor.')
+            terminate_chrome_processes()
+            return
+
+        wait = WebDriverWait(driver, 10)
+
+        for user, user_data in users.items():
+            print(f"--- İşlem başlıyor: {user} ---")
+            process_user(driver, wait, user, user_data)
+            print(f"--- İşlem bitti: {user} ---")
+            time.sleep(5) # Bu 'time.sleep' kalabilir, kullanıcılar arası beklemeyi sağlar.
+
+        print('Tüm kullanıcılar tamamlandı.')
+
+    except Exception as e:
+        print(f"Ana işlem hatası: {e}")
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+        terminate_chrome_processes()
+        print('Program oturumu sonlandı.')		
+
 
 def main():
-	driver = None
-	try:
-		driver = connect_driver(CHROME_PROFILE_PATH)
-		if driver is None:
-			print('Driver alınamadı, program sonlandırılıyor.')
-			terminate_chrome_processes()
-			return
-
-		wait = WebDriverWait(driver, 10)
-
-		for user, user_data in users.items():
-			print(f"--- İşlem başlıyor: {user} ---")
-			process_user(driver, wait, user, user_data)
-			print(f"--- İşlem bitti: {user} ---")
-			time.sleep(5)
-
-		print('Tüm kullanıcılar tamamlandı.')
-
-	except Exception as e:
-		print(f"Ana işlem hatası: {e}")
-	finally:
-		if driver:
-			try:
-				driver.quit()
-			except Exception:
-				pass
-		terminate_chrome_processes()
-		print('Program oturumu sonlandı.')
-
+    scheduler = BlockingScheduler()
+    # run_check fonksiyonunu her 15 dakikada bir çalıştır
+    scheduler.add_job(run_check, 'interval', minutes=15)
+    
+    # Zamanlayıcıyı hemen başlatmak için ilk çalışmayı manuel olarak tetikleyebilirsiniz
+    print("İlk kontrol hemen başlatılıyor...")
+    run_check()
+    
+    print("Zamanlayıcı başlatıldı. Sonraki kontrol 15 dakika sonra.")
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        print("Zamanlayıcı durduruldu.")
+        pass
 
 if __name__ == '__main__':
-	# This file is written to `new_main.py` for safety. After verifying it,
-	# you can rename it to `main.py` and remove the original split modules.
-	main()
-
+    # Bu dosya, tüm mantığı içeren ana script'tir.
+    main()
