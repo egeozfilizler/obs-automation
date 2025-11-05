@@ -35,6 +35,7 @@ from selenium.common.exceptions import (
 	InvalidElementStateException,
 	ElementNotInteractableException,
 	StaleElementReferenceException,
+	ElementClickInterceptedException,
 	TimeoutException,
 )
 
@@ -51,6 +52,8 @@ from credentials import (
 # Path helpers
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTCHA_IMAGE_PATH = os.path.join(CURRENT_DIR, "temp", "captcha.png")
+# Optional path to a system-installed chromedriver (useful on Linux)
+DRIVER_PATH = '/usr/bin/chromedriver'
 
 # Configure logging
 logging.basicConfig()
@@ -97,6 +100,58 @@ def solve_captcha(driver, captcha_path):
 	result_text = captcha_result.get('text', '')
 	numbers = list(map(int, re.findall(r'\d+', result_text)))
 	return str(sum(numbers)) if numbers else result_text
+
+
+def safe_click(driver, element, timeout=5):
+	"""Robust click helper: tries element.click(), scroll, JS click, and
+	hides common overlays when click is intercepted.
+
+	Raises the last exception if all attempts fail.
+	"""
+	end_time = time.time() + timeout
+	last_exc = None
+	while time.time() < end_time:
+		try:
+			element.click()
+			return True
+		except (ElementClickInterceptedException, ElementNotInteractableException, InvalidElementStateException) as e:
+			last_exc = e
+			# try scroll into view
+			try:
+				driver.execute_script('arguments[0].scrollIntoView({block: "center", inline: "center"});', element)
+				time.sleep(0.1)
+				element.click()
+				return True
+			except Exception:
+				pass
+			# try JS click
+			try:
+				driver.execute_script('arguments[0].click();', element)
+				return True
+			except Exception:
+				pass
+				# try hiding common overlays then retry
+				try:
+					driver.execute_script("""
+					const selectors = ['[class*="overlay"]', '.modal', '.swal2-container', '.fancybox-overlay', '.ui-widget-overlay'];
+					for (const s of selectors) {
+						for (const el of document.querySelectorAll(s)) {
+							el.style.display = 'none';
+						}
+					}
+					""")
+					time.sleep(0.08)
+					try:
+						element.click()
+						return True
+					except Exception:
+						pass
+				except Exception:
+					# ignore errors while attempting to hide overlays
+					pass
+				time.sleep(0.12)
+	# all retries failed
+	raise last_exc if last_exc is not None else Exception('click failed')
 
 
 def login_to_obs(driver, wait, user_credentials, captcha_path):
@@ -208,41 +263,43 @@ def go_to_grades(driver):
 	try:
 		wait = WebDriverWait(driver, 10)
 
-		burger_menu = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a[data-widget='pushmenu']")))
-		burger_menu.click()
-		time.sleep(2)
+		# Open the side menu (burger)
+		burger = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-widget='pushmenu']")))
+		try:
+			safe_click(driver, burger)
+		except Exception as e:
+			print(f"Could not open main menu: {e}")
+			return False
 
-		lesson_menu = driver.execute_script("""
-			const menuItems = document.querySelectorAll('.nav-item.has-treeview');
-			for (const item of menuItems) {
-				if (item.querySelector('p').textContent.trim().includes('Ders ve Dönem İşlemleri')) {
-					item.classList.add('menu-open');
-					item.querySelector('.nav-link').click();
-					return true;
-				}
-			}
-			return false;
-		""")
+		# small pause for UI animation
+		time.sleep(0.6)
 
-		if lesson_menu:
-			time.sleep(2)
-			driver.execute_script("""
-				const links = document.querySelectorAll('.nav-treeview .nav-item .nav-link');
-				for (const link of links) {
-					if (link.textContent.trim().includes('Not Listesi')) {
-						link.click();
-						return true;
-					}
-				}
-				return false;
-			""")
+		# Click the 'Ders ve Dönem İşlemleri' parent treeview item
+		try:
+			parent_xpath = "//li[contains(@class,'has-treeview') and .//p[contains(normalize-space(.),'Ders ve Dönem İşlemleri')]]"
+			parent = wait.until(EC.presence_of_element_located((By.XPATH, parent_xpath)))
+			nav_link = parent.find_element(By.XPATH, ".//a[contains(@class,'nav-link')]")
+			safe_click(driver, nav_link)
+		except Exception as e:
+			print(f"Could not open 'Ders ve Dönem İşlemleri' menu: {e}")
 
-			iframe = wait.until(EC.presence_of_element_located((By.ID, "IFRAME1")))
-			driver.switch_to.frame(iframe)
-			time.sleep(3)
-			return True
+		# wait for submenu to render
+		time.sleep(0.8)
 
-		return False
+		# Click the 'Not Listesi' link
+		try:
+			not_list_xpath = "//a[contains(normalize-space(.),'Not Listesi')]"
+			not_link = wait.until(EC.element_to_be_clickable((By.XPATH, not_list_xpath)))
+			safe_click(driver, not_link)
+		except Exception as e:
+			print(f"Could not click 'Not Listesi' link: {e}")
+			return False
+
+		# switch to iframe
+		iframe = wait.until(EC.presence_of_element_located((By.ID, "IFRAME1")))
+		driver.switch_to.frame(iframe)
+		time.sleep(1.8)
+		return True
 
 	except Exception as e:
 		print(f"Navigation Error: {e}")
@@ -424,8 +481,24 @@ def connect_driver(headless=False):
 		options.add_argument('--disable-password-manager-reauthentication')
 		options.add_argument('--password-store=basic')
 		if headless:
-			options.add_argument('--headless')
+			# headless flag for modern Chrome
+			options.add_argument('--headless=new')
+			options.add_argument('--disable-gpu')
+		# Helpful defaults for Linux environments
+		options.add_argument('--no-sandbox')
+		options.add_argument('--disable-dev-shm-usage')
 
+		# Prefer a system chromedriver if present (useful for Linux)
+		if os.path.exists(DRIVER_PATH):
+			service = Service(DRIVER_PATH)
+			try:
+				driver = webdriver.Chrome(service=service, options=options)
+				print(f'Chrome WebDriver başlatıldı (system driver: {DRIVER_PATH}).')
+				return driver
+			except Exception as e:
+				print(f'Failed to start driver at {DRIVER_PATH}: {e} -- falling back to webdriver-manager')
+
+		# Fallback to webdriver-manager
 		service = Service(ChromeDriverManager().install())
 		# Explicitly create the driver with Service and options as requested
 		driver = webdriver.Chrome(service=service, options=options)
