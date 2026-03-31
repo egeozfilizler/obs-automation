@@ -6,6 +6,7 @@ __pycache__/
 # Ignore virtual environment directories
 env/
 venv/
+.venv/
 
 # Ignore sensitive files
 credentials.py
@@ -21,3 +22,6 @@ data/*.json
 # Ignore system files
 .DS_Store
 Thumbs.db
+
+# Ignore SSH keys
+ssh/

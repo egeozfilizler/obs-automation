@@ -14,6 +14,7 @@ import shutil
 import re
 import base64
 import smtplib
+import signal
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -22,7 +23,7 @@ import capsolver
 from deepdiff import DeepDiff
 
 import logging
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -484,6 +485,9 @@ def connect_driver(headless=False):
 			# headless flag for modern Chrome
 			options.add_argument('--headless=new')
 			options.add_argument('--disable-gpu')
+			options.add_argument('--window-size=1920,1080') # Sanal bir çözünürlük tanımlar
+			options.add_argument('--no-sandbox')
+			options.add_argument('--disable-dev-shm-usage')
 		# Helpful defaults for Linux environments
 		options.add_argument('--no-sandbox')
 		options.add_argument('--disable-dev-shm-usage')
@@ -599,19 +603,35 @@ def run_check():
 
 
 def main():
-    scheduler = BlockingScheduler()
+    scheduler = BackgroundScheduler()
+    
+    def signal_handler(sig, frame):
+        print("\n\nProgram Ctrl+C ile durduruldu.")
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+        terminate_chrome_processes()
+        print("Program kapatılıyor...")
+        sys.exit(0)
+    
+    # Signal handler'ları ayarla (Ctrl+C ile kesmeyi sağla)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     # run_check fonksiyonunu her 15 dakikada bir çalıştır
     scheduler.add_job(run_check, 'interval', minutes=15)
     
-    # Zamanlayıcıyı hemen başlatmak için ilk çalışmayı manuel olarak tetikleyebilirsiniz
     print("İlk kontrol hemen başlatılıyor...")
     run_check()
     
+    scheduler.start()
     print("Zamanlayıcı başlatıldı. Sonraki kontrol 15 dakika sonra.")
+    print("Durdurmak için Ctrl+C tuşlarına basın.")
+    
     try:
-        scheduler.start()
+        # Main thread'i canlı tut, böylece signal handler çalışabilir
+        while True:
+            time.sleep(1)
     except (KeyboardInterrupt, SystemExit):
-        print("Zamanlayıcı durduruldu.")
         pass
 
 if __name__ == '__main__':
